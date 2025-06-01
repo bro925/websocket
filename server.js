@@ -1,7 +1,9 @@
+const express = require('express');
 const WebSocket = require('ws');
-
+const app = express();
 const PORT = process.env.PORT || 8080;
-const server = new WebSocket.Server({ port: PORT });
+
+app.use(express.json());
 
 const clients = new Map();
 
@@ -85,6 +87,29 @@ function broadcastPlayerLeave(username) {
         }
     });
 }
+
+app.post('/join', (req, res) => {
+    const { username } = req.body;
+    clients.set(username, { type: 'http', username });
+    console.log(`Player ${username} joined via HTTP`);
+    res.json({ status: 'success' });
+});
+
+app.post('/leave', (req, res) => {
+    const { username } = req.body;
+    clients.delete(username);
+    console.log(`Player ${username} left via HTTP`);
+    res.json({ status: 'success' });
+});
+
+app.post('/users', (req, res) => {
+    const userList = Array.from(clients.keys());
+    res.json({ users: userList });
+});
+
+const server = app.listen(PORT, () => {
+    console.log(`FF Server running on port ${PORT}`);
+});
 
 setInterval(() => {
     console.log(`Server alive - ${clients.size} clients connected`);
