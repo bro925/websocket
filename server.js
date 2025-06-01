@@ -6,6 +6,7 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 app.use(express.json());
+
 const clients = new Map();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
@@ -22,7 +23,8 @@ app.post('/join', (req, res) => {
             type: 'http', 
             username: username,
             client: client || 'FF_CLIENT',
-            joinTime: new Date()
+            joinTime: new Date(),
+            lastSeen: new Date()
         });
         
         console.log(`Player ${username} joined via HTTP`);
@@ -70,6 +72,13 @@ app.post('/leave', (req, res) => {
 
 app.post('/users', (req, res) => {
     try {
+        const { username } = req.body;
+        if (username && clients.has(username)) {
+            const client = clients.get(username);
+            client.lastSeen = new Date();
+            clients.set(username, client);
+        }
+        
         const userList = Array.from(clients.keys());
         res.json({ 
             users: userList,
@@ -190,26 +199,40 @@ function broadcastPlayerLeave(username) {
 
 setInterval(() => {
     let removedCount = 0;
+    const now = new Date();
+    const TIMEOUT_MS = 30000;
     
     clients.forEach((client, username) => {
         if (client.type === 'websocket' && 
             (!client.ws || client.ws.readyState !== WebSocket.OPEN)) {
             clients.delete(username);
             removedCount++;
+        } else if (client.type === 'http' && client.lastSeen) {
+            const timeSinceLastSeen = now - client.lastSeen;
+            if (timeSinceLastSeen > TIMEOUT_MS) {
+                console.log(`HTTP client ${username} timed out (${Math.round(timeSinceLastSeen/1000)}s since last heartbeat)`);
+                clients.delete(username);
+                removedCount++;
+                
+                broadcastToWebSocket({
+                    type: 'player_leave',
+                    username: username
+                });
+            }
         }
     });
     
     if (removedCount > 0) {
-        console.log(`Cleaned up ${removedCount} disconnected WebSocket clients`);
+        console.log(`Cleaned up ${removedCount} disconnected/timed out clients`);
     }
-}, 30000);
+}, 15000);
 
 setInterval(() => {
     const httpClients = Array.from(clients.values()).filter(c => c.type === 'http').length;
     const wsClients = Array.from(clients.values()).filter(c => c.type === 'websocket').length;
     
-    console.log(`Server alive - ${clients.size} total clients (${httpClients} HTTP, ${wsClients} WebSocket)`);
-}, 10000);
+    console.log(`${clients.size} total clients (${httpClients} HTTP, ${wsClients} WebSocket)`);
+}, 300000);
 
 server.listen(PORT, () => {
     console.log(`FF Server running on port ${PORT}`);
